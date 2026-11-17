@@ -29,17 +29,18 @@ async function hmac(value, secret) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return b64url(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
 }
+async function deriveAesKey(secret) {
+  const raw = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("online4tech-meta-token-encryption:" + secret));
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
 async function encrypt(value, secret) {
-  const raw = Uint8Array.from(atob(secret), c => c.charCodeAt(0));
-  if (raw.length !== 32) throw new Error("TOKEN_ENCRYPTION_KEY must be base64 for exactly 32 bytes");
-  const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"]);
+  const key = await deriveAesKey(secret);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(value)));
   return JSON.stringify({ iv: b64url(iv), data: b64url(ciphertext) });
 }
 async function decrypt(payload, secret) {
-  const raw = Uint8Array.from(atob(secret), c => c.charCodeAt(0));
-  const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+  const key = await deriveAesKey(secret);
   const parsed = JSON.parse(payload);
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64url(parsed.iv) }, key, fromB64url(parsed.data));
   return JSON.parse(new TextDecoder().decode(plain));
@@ -61,7 +62,7 @@ async function graphGet(path, params = {}) {
 async function loadConnection(env) {
   const encrypted = await env.META_KV.get("meta-connection");
   if (!encrypted) return null;
-  return decrypt(encrypted, env.TOKEN_ENCRYPTION_KEY);
+  return decrypt(encrypted, env.META_APP_SECRET);
 }
 async function requireApi(request, env) {
   const auth = request.headers.get("Authorization") || "";
@@ -78,10 +79,10 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/auth/start") {
-        if (!env.META_APP_ID || !env.META_APP_SECRET || !env.OAUTH_STATE_SECRET) return json({ error: "OAuth secrets are not configured" }, 503);
+        if (!env.META_APP_ID || !env.META_APP_SECRET || !env.META_APP_SECRET) return json({ error: "OAuth secrets are not configured" }, 503);
         const redirectUri = `${url.origin}/auth/callback`;
         const nonce = b64url(crypto.getRandomValues(new Uint8Array(24)));
-        const signature = await hmac(nonce, env.OAUTH_STATE_SECRET);
+        const signature = await hmac(nonce, env.META_APP_SECRET);
         const state = `${nonce}.${signature}`;
         const login = new URL(`https://www.facebook.com/${API_VERSION}/dialog/oauth`);
         login.searchParams.set("client_id", env.META_APP_ID);
@@ -100,7 +101,7 @@ export default {
         const state = url.searchParams.get("state") || "";
         const [nonce, signature] = state.split(".");
         const stateCookie = getCookie(request, "o4t_meta_state");
-        if (!nonce || !signature || !stateCookie || nonce !== stateCookie || signature !== await hmac(nonce, env.OAUTH_STATE_SECRET || "")) return json({ error: "Invalid OAuth state" }, 400);
+        if (!nonce || !signature || !stateCookie || nonce !== stateCookie || signature !== await hmac(nonce, env.META_APP_SECRET || "")) return json({ error: "Invalid OAuth state" }, 400);
         const code = url.searchParams.get("code");
         if (!code) return json({ error: url.searchParams.get("error_description") || "Meta authorization was cancelled" }, 400);
         const redirectUri = `${url.origin}/auth/callback`;
@@ -132,7 +133,7 @@ export default {
           token_expires_in: longToken.expires_in || null,
           pages: pages.data || []
         };
-        await env.META_KV.put("meta-connection", await encrypt(connection, env.TOKEN_ENCRYPTION_KEY));
+        await env.META_KV.put("meta-connection", await encrypt(connection, env.META_APP_SECRET));
         return new Response(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Online4Tech</title><body style="font-family:Arial;background:#0b1220;color:#fff;padding:40px;line-height:1.8"><h2>تم ربط Meta بنجاح</h2><p>تم حفظ الاتصال بشكل مشفّر. تقدر تقفل الصفحة وترجع للشات.</p></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "Set-Cookie": cookie("o4t_meta_state", "", 0) } });
       }
 
