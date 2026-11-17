@@ -89,13 +89,18 @@ export default {
         login.searchParams.set("response_type", "code");
         login.searchParams.set("scope", REQUIRED_SCOPES.join(","));
         login.searchParams.set("state", state);
-        return Response.redirect(login.toString(), 302);
+        return new Response(null, { status: 302, headers: {
+          Location: login.toString(),
+          "Set-Cookie": cookie("o4t_meta_state", nonce, 300),
+          "Cache-Control": "no-store"
+        } });
       }
 
       if (request.method === "GET" && url.pathname === "/auth/callback") {
         const state = url.searchParams.get("state") || "";
         const [nonce, signature] = state.split(".");
-        if (!nonce || !signature || signature !== await hmac(nonce, env.OAUTH_STATE_SECRET || "")) return json({ error: "Invalid OAuth state" }, 400);
+        const stateCookie = getCookie(request, "o4t_meta_state");
+        if (!nonce || !signature || !stateCookie || nonce !== stateCookie || signature !== await hmac(nonce, env.OAUTH_STATE_SECRET || "")) return json({ error: "Invalid OAuth state" }, 400);
         const code = url.searchParams.get("code");
         if (!code) return json({ error: url.searchParams.get("error_description") || "Meta authorization was cancelled" }, 400);
         const redirectUri = `${url.origin}/auth/callback`;
@@ -128,7 +133,7 @@ export default {
           pages: pages.data || []
         };
         await env.META_KV.put("meta-connection", await encrypt(connection, env.TOKEN_ENCRYPTION_KEY));
-        return new Response(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Online4Tech</title><body style="font-family:Arial;background:#0b1220;color:#fff;padding:40px;line-height:1.8"><h2>تم ربط Meta بنجاح</h2><p>تم حفظ الاتصال بشكل مشفّر. تقدر تقفل الصفحة وترجع للشات.</p></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+        return new Response(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Online4Tech</title><body style="font-family:Arial;background:#0b1220;color:#fff;padding:40px;line-height:1.8"><h2>تم ربط Meta بنجاح</h2><p>تم حفظ الاتصال بشكل مشفّر. تقدر تقفل الصفحة وترجع للشات.</p></body></html>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "Set-Cookie": cookie("o4t_meta_state", "", 0) } });
       }
 
       if (url.pathname.startsWith("/api/")) {
