@@ -2,6 +2,9 @@ name = "online4tech-meta"
 main = "src/index.js"
 compatibility_date = "2026-11-17"
 
+[vars]
+META_APP_ID = "1646355927022066"
+
 [[kv_namespaces]]
 binding = "META_KV"
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
